@@ -287,6 +287,7 @@ func (s *apiService) Serve() {
 	getRestMux.HandleFunc("/rest/system/debug", s.getSystemDebug)                // -
 	getRestMux.HandleFunc("/rest/system/log", s.getSystemLog)                    // [since]
 	getRestMux.HandleFunc("/rest/system/log.txt", s.getSystemLogTxt)             // [since]
+	getRestMux.HandleFunc("/rest/system/support", s.getSupportBundle)            // -
 
 	// The POST handlers
 	postRestMux := http.NewServeMux()
@@ -1001,6 +1002,45 @@ func (s *apiService) getSystemLogTxt(w http.ResponseWriter, r *http.Request) {
 	for _, line := range s.systemLog.Since(since) {
 		fmt.Fprintf(w, "%s: %s\n", line.When.Format(time.RFC3339), line.Message)
 	}
+}
+
+func (s *apiService) getSupportBundle(w http.ResponseWriter, r *http.Request) {
+
+	jsonConfig, _ := json.MarshalIndent(s.cfg.RawCopy(), "", "	")
+	createJSONFile("config.json", jsonConfig)
+
+	jsonLog, _ := json.MarshalIndent(s.systemLog.All(), "", "	")
+	createJSONFile("log.json", jsonLog)
+
+	jsonError, _ := json.MarshalIndent(s.guiErrors.All(), "", "	")
+	createJSONFile("error.json", jsonError)
+
+	heapRuntime := fmt.Sprintf("syncthing-heap-%s-%s-%s-%s.pprof", runtime.GOOS, runtime.GOARCH, Version, time.Now().Format("150405")) // hhmmss
+	createJSONFile("heapRuntime.txt", []byte(heapRuntime))
+
+	t := time.Now().Format("2006-01-02T15.04.05")
+	output := t + ".zip"
+
+	path := baseDirs["config"] + "/support_bundle"
+
+	e := os.MkdirAll(path, 0700)
+	if e != nil {
+		log.Fatalf("MkdirAll %q: %s", path, e)
+	}
+
+	newfilepath := path + "/" + output
+	newfile, _ := os.Create(newfilepath)
+	defer newfile.Close()
+
+	files := []string{"config.json", "log.json", "error.json", "heapRuntime.txt"}
+	ZipFiles(newfile, files)
+	removeFiles(files)
+
+	from, _ := os.Open(newfilepath)
+	w.Header().Set("Content-Disposition", "attachment; filename="+output)
+	w.Header().Set("Content-Type", "application/zip")
+	io.Copy(w, from)
+	sendJSON(w, map[string]string{"file_name": output})
 }
 
 func (s *apiService) getSystemHTTPMetrics(w http.ResponseWriter, r *http.Request) {
